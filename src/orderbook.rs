@@ -48,8 +48,12 @@ impl OrderBook {
                     let fill_qty = min(order.quantity, resting_order.quantity);
 
                     // Note down fill to events
-                    events.push(Event:: Trade { buy_order_id: order.id, sell_order_id: resting_order.id, price: resting_order.price,
-                        qty: resting_order.quantity, timestamp: time});
+                    match order.side {
+                        Side::Buy => events.push(Event:: Trade { buy_order_id: order.id, sell_order_id: resting_order.id, price: resting_order.price,
+                        qty: resting_order.quantity, timestamp: time}),
+                        Side::Sell => events.push(Event:: Trade { buy_order_id: resting_order.id, sell_order_id: order.id, price: resting_order.price,
+                        qty: resting_order.quantity, timestamp: time})
+                    };
 
                     order.quantity -= fill_qty;
                     resting_order.quantity -= fill_qty;
@@ -126,4 +130,74 @@ impl OrderBook {
             event
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::order::{Order, Side};
+
+    #[test]
+    fn full_fill_single_price_level() {
+        let mut book = OrderBook::new();
+        let mut events = Vec::new();
+
+        events.extend(book.submit(Order {
+            id: 123,
+            side: Side::Buy,
+            price: 100,
+            quantity: 50
+        }));
+
+        events.extend(book.submit(Order {
+            id: 234,
+            side: Side::Sell,
+            price: 100,
+            quantity: 50
+        }));
+
+        assert_eq!(events.len(), 5); // ACCEPT, RESTED, ACCEPT, TRADE, RESTINGFULFILLED
+
+        match &events[0] {
+            Event::Accepted { order_id, ..} => assert_eq!(*order_id, 123),
+            other => panic!("Expected Accepted, got {:?}", other),
+        }
+
+        match &events[1] {
+            Event::Rested { order_id, ..} => assert_eq!(*order_id, 123),
+            other => panic!("Expected Rested, got {:?}", other),
+        }
+
+        match &events[2] {
+            Event::Accepted { order_id, ..} => assert_eq!(*order_id, 234),
+            other => panic!("Expected Accepted, got {:?}", other),
+        }
+
+        match &events[3] {
+            Event::Trade { buy_order_id, sell_order_id: _, price: _, qty: _, timestamp: _ } => assert_eq!(*buy_order_id, 123),
+            other => panic!("Expected Trade, got {:?}", other),
+        }
+
+        match &events[4] {
+            Event::RestingFulfilled { order_id, timestamp: _ } => assert_eq!(*order_id, 123),
+            other => panic!("Expected RestingFulfilled, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn time_priority_test() {
+        let mut book = OrderBook::new();
+        let mut events = Vec::new();
+
+        events.extend(book.submit(Order {id: 123,  side: Side::Buy, price: 100, quantity: 50}));
+        events.extend(book.submit(Order {id: 234,  side: Side::Buy, price: 100, quantity: 50}));
+        events.extend(book.submit(Order {id: 345,  side: Side::Sell, price: 100, quantity: 50}));
+
+        match &events[5] {
+            Event::Trade { buy_order_id, ..} 
+            => assert_eq!(*buy_order_id, 123),
+            other=> panic!("Expected Trade, got {:?}", other)
+        }
+    }
+
 }
