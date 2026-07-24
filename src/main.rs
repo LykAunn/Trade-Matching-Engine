@@ -8,9 +8,9 @@ fn main() {
     let mut book = OrderBook::new();
     let mut events = Vec::new();
 
-    events.extend(book.submit(Order {id: 134, side: Side::Buy, price: 100,  quantity: 10}));
-    events.extend(book.submit(Order {id:123, side: Side::Buy,price:101, quantity: 999}));
-    events.extend(book.submit(Order {id: 223, side: Side::Sell, price: 99, quantity: 6}));
+    events.extend(book.submit(Order {id: 134, side: Side::Buy, price: 100,  quantity: 10, trade_type: order::TradeType::Limit}));
+    events.extend(book.submit(Order {id:123, side: Side::Sell, price:0, quantity: 999, trade_type: order::TradeType::Market}));
+    events.extend(book.submit(Order {id: 223, side: Side::Sell, price: 99, quantity: 6, trade_type: order::TradeType::Limit}));
     
     // println!("{:?}", event);
     for event in events {

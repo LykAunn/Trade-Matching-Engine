@@ -7,12 +7,20 @@ pub enum Side {
     Sell,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TradeType {
+    Limit,
+    Market,
+    Ioc,
+}
+
 #[derive(Debug, Clone)]
 pub struct Order {
     pub id: u64,
     pub side: Side,
     pub price: u64,
     pub quantity: u64,
+    pub trade_type: TradeType,
 }
 
 
@@ -50,6 +58,12 @@ pub enum Event {
     RestingFulfilled {
         order_id: u64,
         timestamp: u64,
+    },
+
+    Discarded {
+        order_id: u64,
+        timestamp: u64,
+        quantity: u64,
     }
     
 }
@@ -96,6 +110,11 @@ impl Event {
                 format!("[{}] REST FULFILLED     order #{}",
                 format_timestamp(*timestamp), order_id
             )
+            }
+
+            Event::Discarded { order_id, timestamp, quantity } => {
+                format!("[{}] REMAINING DISCARDED     order #{} with {} units remaining",
+                format_timestamp(*timestamp), order_id, quantity)
             }
         }
     }

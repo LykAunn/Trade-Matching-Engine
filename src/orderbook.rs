@@ -1,4 +1,4 @@
-use crate::order::{Event, Order, Side};
+use crate::order::{Event, Order, Side, TradeType};
 use std::{cmp::min, collections::{BTreeMap, HashMap}, time::UNIX_EPOCH};
 use std::time::{SystemTime};
 
@@ -15,6 +15,12 @@ pub fn now_ts() -> u64 {
         .as_nanos() as u64
 }
 
+fn format_timestamp(nanos: u64) -> String {
+    let duration = Duration::from_nanos(nanos);
+    let datetime: DateTime<Utc> = (UNIX_EPOCH + duration).into();
+    datetime.format("%Y-%m-%d %H-%M:%S%.3f").to_string()
+}
+
 impl OrderBook {
     pub fn new() -> Self {
         OrderBook {bids: BTreeMap::new(), asks: BTreeMap::new(), order_index: HashMap::new()}
@@ -24,6 +30,7 @@ impl OrderBook {
     pub fn submit(&mut self, mut order: Order) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
         let time = now_ts();
+        let matching_prices: Vec<u64>;
 
         events.push(Event::Accepted { order_id: order.id, timestamp: time});
 
@@ -32,10 +39,22 @@ impl OrderBook {
             Side::Sell => &mut self.bids,
         };
 
-        let matching_prices: Vec<u64> = match order.side {
-            Side::Buy => book.range(..=order.price).map(|(p, _)| * p).collect(),
-            Side::Sell => book.range(order.price..).rev().map(|(p, _)| * p).collect(),
-        };
+        if order.trade_type == TradeType::Market {
+            matching_prices = match order.side {
+                
+                // Market, match whatever price
+                Side::Buy => book.range(..).map(|(p, _)| * p).collect(),
+                Side::Sell => book.range(..).rev().map(|(p, _)| * p).collect(),
+            };
+        } else {
+            
+            // Limit trade, match prices according to limit price
+            matching_prices = match order.side {
+                Side::Buy => book.range(..=order.price).map(|(p, _)| * p).collect(),
+                Side::Sell => book.range(order.price..).rev().map(|(p, _)| * p).collect(),
+            };
+        }
+
 
         for price in matching_prices {
             if order.quantity == 0 {break}
@@ -78,10 +97,16 @@ impl OrderBook {
                 Side::Sell => &mut self.asks,
             };
 
+            if order.trade_type == TradeType::Ioc {
 
-            self.order_index.insert(order.id, (order.side, order.price));
-            events.push(Event::Rested { order_id: order.id, timestamp: time });
-            resting_book.entry(order.price).or_insert_with(Vec::new).push(order);
+                // Ioc trade, do not rest
+                events.push(Event::Discarded { order_id: order.id, timestamp: time, quantity: order.quantity})                
+            } else {
+
+                self.order_index.insert(order.id, (order.side, order.price));
+                events.push(Event::Rested { order_id: order.id, timestamp: time });
+                resting_book.entry(order.price).or_insert_with(Vec::new).push(order);
+            }
 
         }
 
