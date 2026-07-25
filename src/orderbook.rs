@@ -1,6 +1,7 @@
 use crate::order::{Event, Order, Side, TradeType};
 use std::{cmp::min, collections::{BTreeMap, HashMap}, time::UNIX_EPOCH};
-use std::time::{SystemTime};
+use std::time::{SystemTime, Duration};
+use chrono::{DateTime, Utc};
 
 pub struct OrderBook {
     bids: BTreeMap<u64, Vec<Order>>, // Buy
@@ -159,7 +160,9 @@ impl OrderBook {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::assert_eq;
+
+use super::*;
     use crate::order::{Order, Side};
 
     #[test]
@@ -171,14 +174,16 @@ mod tests {
             id: 123,
             side: Side::Buy,
             price: 100,
-            quantity: 50
+            quantity: 50,
+            trade_type: TradeType::Limit
         }));
 
         events.extend(book.submit(Order {
             id: 234,
             side: Side::Sell,
             price: 100,
-            quantity: 50
+            quantity: 50,
+            trade_type: TradeType::Limit
         }));
 
         assert_eq!(events.len(), 5); // ACCEPT, RESTED, ACCEPT, TRADE, RESTINGFULFILLED
@@ -214,15 +219,49 @@ mod tests {
         let mut book = OrderBook::new();
         let mut events = Vec::new();
 
-        events.extend(book.submit(Order {id: 123,  side: Side::Buy, price: 100, quantity: 50}));
-        events.extend(book.submit(Order {id: 234,  side: Side::Buy, price: 100, quantity: 50}));
-        events.extend(book.submit(Order {id: 345,  side: Side::Sell, price: 100, quantity: 50}));
+        events.extend(book.submit(Order {id: 123,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {id: 234,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {id: 345,  side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
 
         match &events[5] {
             Event::Trade { buy_order_id, ..} 
             => assert_eq!(*buy_order_id, 123),
             other=> panic!("Expected Trade, got {:?}", other)
         }
+    }
+
+    #[test]
+    fn market_order() {
+        let mut book = OrderBook::new();
+        let mut events = Vec::new();
+
+        events.extend(book.submit(Order {id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {id: 234, side: Side::Buy, price: 99, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {id: 321, side: Side::Buy, price: 0, quantity: 99, trade_type: TradeType::Market}));
+
+        match &events[5] {
+            Event::Trade { buy_order_id , ..}
+            => assert_eq!(*buy_order_id, 321),
+            other => panic!("Expected Trade, got {:?}", other)
+        }
+    }
+
+    #[test]
+    fn ioc_order() {
+        let mut book = OrderBook::new();
+        let mut events = Vec::new();
+
+        events.extend(book.submit(Order {id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {id: 321, side: Side::Buy, price: 100, quantity: 100, trade_type: TradeType::Ioc}));
+
+        match &events[3] {
+            Event::Trade { buy_order_id , ..}
+            => assert_eq!(*buy_order_id, 321),
+            other => panic!("Expected Trade, got {:?}", other)
+        }
+
+        let outstanding = book.get_outstanding(Side::Buy);
+        assert!(outstanding.is_empty(), "expected no outstanding buy orders, found {:?}", outstanding);
     }
 
 }
