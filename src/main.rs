@@ -12,31 +12,82 @@ use feed_simulator::FeedSimulator;
 
 use crate::order::{Event, Order};
 use ratatui::{
-    Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, macros::constraint, widgets::{Block, Borders, List, ListItem, Paragraph},
+    Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, widgets::{Block, Borders, List, ListItem},
 };
-use std::{fmt::format, io};
+use std::{io, sync::mpsc, time::Duration, };
+use std::thread;
 use order::Side;
 
-fn main() -> io::Result<()>{
-    let mut book = OrderBook::new();
-    let mut events: Vec<Event> = Vec::new();
-    let mut simulator = FeedSimulator::new(5.0, 2.0);
-
+fn main() -> io::Result<()>{    
     // --- terminal setup ---
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+    
+    let (order_tx, order_rx) = mpsc::channel::<Order>();
+    spawn_simulator(order_tx);
 
-    // --- app loop ---
-    loop {
-        // advance simulation by one order per tick
-        let (order, gap) = simulator.generate_next();
-        let outcome = book.submit(order);
-        events.extend(outcome);
+    let mut app = App::new(order_rx);
+    app.run(&mut terminal)?;
 
-        terminal.draw(|frame| {
-            // Top view
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    Ok(())
+}
+
+fn spawn_simulator(order_tx: mpsc::Sender<Order>) {
+    thread::spawn(move || {
+        let mut simulator = FeedSimulator::new(5.0, 2.0);
+        loop {
+            let (order, gap) = simulator.generate_next();
+            thread::sleep(Duration::from_secs_f64(gap.min(1.0)));
+            if order_tx.send(order).is_err() {
+                break; // receiver was dropped - main thread exited, stop generating
+            }
+        }
+    });
+}
+struct App {
+    book: OrderBook,
+    events: Vec<Event>,
+    order_rx: mpsc::Receiver<Order>,
+    exit:bool,
+}
+
+impl App {
+    fn new(order_rx: mpsc::Receiver<Order>) -> Self {
+        App {
+            book: OrderBook::new(),
+            events: Vec::new(),
+            order_rx,
+            exit: false,
+        }
+    }
+
+    fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        while !self.exit {
+            while let Ok(order) = self.order_rx.try_recv() {
+                let outcome = self.book.submit(order);
+                self.events.extend(outcome);
+            }
+
+            terminal.draw(|frame| self.draw(frame))?;
+
+            if event::poll(Duration::from_millis(50))? {
+                if let CEvent::Key(key) = event::read()? {
+                    if key.code == KeyCode::Char('q') {
+                        self.exit = true;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn draw(&self, frame: &mut ratatui::Frame) {
+        // Top view
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -48,7 +99,7 @@ fn main() -> io::Result<()>{
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(chunks[1]);
 
-            let log_items: Vec<ListItem> = events.iter()
+            let log_items: Vec<ListItem> = self.events.iter()
                 .rev()
                 .take(30)
                 .map(|e| ListItem::new(e.to_log_line()))
@@ -58,7 +109,7 @@ fn main() -> io::Result<()>{
                 .block(Block::default().borders(Borders::ALL).title("Trade Log"));
             frame.render_widget(log_list, chunks[0]);
 
-            let mut bids: Vec<Order> = book.get_outstanding(Side::Buy);
+            let mut bids: Vec<Order> = self.book.get_outstanding(Side::Buy);
             // Sort highest to lowest
             bids.sort_by(|a, b| b.price.cmp(&a.price));
 
@@ -70,7 +121,7 @@ fn main() -> io::Result<()>{
                 .block(Block::default().borders(Borders::ALL).title("Bids"));
             frame.render_widget(buy_widget, bottom_chunks[0]);
             
-            let mut asks: Vec<Order> = book.get_outstanding(Side::Sell);
+            let mut asks: Vec<Order> = self.book.get_outstanding(Side::Sell);
             // Sort lowest to highest
             asks.sort_by_key(|o| o.price);
 
@@ -81,20 +132,5 @@ fn main() -> io::Result<()>{
             let sell_widget = List::new(ask_lines)
                 .block(Block::default().borders(Borders::ALL).title("Asks"));
             frame.render_widget(sell_widget, bottom_chunks[1]);
-        })?;
-
-        let wait = std::time::Duration::from_secs_f64(gap.min(1.0));
-        if event::poll(wait)? {
-            if let CEvent::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
-                }
-            }
-        }
     }
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-    Ok(())
 }
