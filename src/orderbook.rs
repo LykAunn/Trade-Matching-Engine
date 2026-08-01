@@ -98,15 +98,13 @@ impl OrderBook {
                 Side::Sell => &mut self.asks,
             };
 
-            if order.trade_type == TradeType::Ioc {
-
-                // Ioc trade, do not rest
-                events.push(Event::Discarded { order_id: order.id, timestamp: time, quantity: order.quantity})                
-            } else {
-
+            if order.trade_type == TradeType::Limit {
                 self.order_index.insert(order.id, (order.side, order.price));
                 events.push(Event::Rested { order_id: order.id, timestamp: time });
                 resting_book.entry(order.price).or_insert_with(Vec::new).push(order);
+            } else {
+                // Ioc/Market trade, do not rest
+                events.push(Event::Discarded { order_id: order.id, timestamp: time, quantity: order.quantity})                
             }
 
         }

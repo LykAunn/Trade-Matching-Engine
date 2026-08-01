@@ -1,6 +1,7 @@
 mod order;
 mod orderbook;
 mod feed_simulator;
+mod statistics;
 
 use crossterm::{
     terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -9,10 +10,11 @@ use crossterm::{
 };
 use orderbook::OrderBook;
 use feed_simulator::FeedSimulator;
+use statistics::Stats;
 
 use crate::order::{Event, Order};
 use ratatui::{
-    Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, widgets::{Block, Borders, List, ListItem},
+    Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use std::{io, sync::mpsc, time::Duration, };
 use std::thread;
@@ -53,6 +55,7 @@ struct App {
     book: OrderBook,
     events: Vec<Event>,
     order_rx: mpsc::Receiver<Order>,
+    statistics: Stats,
     exit:bool,
 }
 
@@ -62,6 +65,7 @@ impl App {
             book: OrderBook::new(),
             events: Vec::new(),
             order_rx,
+            statistics: Stats::new(),
             exit: false,
         }
     }
@@ -70,6 +74,9 @@ impl App {
         while !self.exit {
             while let Ok(order) = self.order_rx.try_recv() {
                 let outcome = self.book.submit(order);
+                for event in &outcome {
+                    self.statistics.record_event(event);
+                }
                 self.events.extend(outcome);
             }
 
@@ -87,27 +94,50 @@ impl App {
     }
 
     fn draw(&self, frame: &mut ratatui::Frame) {
-        // Top view
+            // Split view into chunks
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .constraints([Constraint::Length(3), Constraint::Percentage(70), Constraint::Percentage(30)])
                 .split(frame.area());
 
+            let log_items: Vec<ListItem> = self.events.iter()
+            .rev()
+            .take(30)
+            .map(|e| ListItem::new(e.to_log_line()))
+            .collect();
+
+            let (best_bid, best_ask) = {
+                let bids = self.book.get_outstanding(Side::Buy);
+                let asks = self.book.get_outstanding(Side::Sell);
+                let best_bid = bids.iter().map(|o| o.price).max();
+                let best_ask = asks.iter().map(|o| o.price).min();
+                (best_bid, best_ask)
+            };
+
+            let spread_text = match (best_bid, best_ask) {
+                (Some(b), Some(a)) => format!(
+                    "Bid: {}  Ask: {}  Spread: {}  Trades: {}  Vol: {}  VWAP: {:.2}",
+                    b, a, a.saturating_sub(b), self.statistics.trade_count, self.statistics.total_volume,
+                    self.statistics.vwap().unwrap_or(0.0)
+                ),
+                _ => "Waiting for liquidity...".to_string(),
+            };
+
+            // Top view
+            let stats_widget = Paragraph::new(spread_text)
+                .block(Block::default().borders(Borders::ALL).title("Market Stats"));
+            frame.render_widget(stats_widget, chunks[0]);
+        
+            // Mid view
+            let log_list = List::new(log_items)
+                .block(Block::default().borders(Borders::ALL).title("Trade Log"));
+            frame.render_widget(log_list, chunks[1]);
+            
             // Bottom view (bids & asks)
             let bottom_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(chunks[1]);
-
-            let log_items: Vec<ListItem> = self.events.iter()
-                .rev()
-                .take(30)
-                .map(|e| ListItem::new(e.to_log_line()))
-                .collect();
-
-            let log_list = List::new(log_items)
-                .block(Block::default().borders(Borders::ALL).title("Trade Log"));
-            frame.render_widget(log_list, chunks[0]);
+                .split(chunks[2]);
 
             let mut bids: Vec<Order> = self.book.get_outstanding(Side::Buy);
             // Sort highest to lowest
