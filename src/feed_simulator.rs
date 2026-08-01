@@ -42,8 +42,8 @@ impl FeedSimulator {
 
         // Buy/sell price
         let price = match side{
-            Side::Buy => (self.mid_price - 2.0).round() as u64,
-            Side::Sell => (self.mid_price + 2.0).round() as u64
+            Side::Buy => (self.mid_price - self.rng.random_range(2..5) as f64).round() as u64,
+            Side::Sell => (self.mid_price + self.rng.random_range(2..5) as f64).round() as u64,
         };
 
         let quantity = self.rng.random_range(1..=100);
