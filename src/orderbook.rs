@@ -1,4 +1,4 @@
-use crate::order::{Event, Order, Side, TradeType};
+use crate::order::{Event::{self, RestingFulfilled}, Order, Side, TradeType};
 use std::{cmp::min, collections::{BTreeMap, HashMap}, time::UNIX_EPOCH};
 use std::time::{SystemTime, Duration};
 use chrono::{DateTime, Utc};
@@ -89,6 +89,13 @@ impl OrderBook {
                         i += 1;
                     }
                 }
+
+            }
+
+            if let Some(resting) = book.get(&price) {
+                if resting.is_empty() {
+                    book.remove(&price);
+                }
             }
         }
 
@@ -112,13 +119,21 @@ impl OrderBook {
         events
     }
 
-    pub fn get_outstanding(&self, side: Side) -> Vec<Order> {
+    pub fn get_outstanding_orders(&self, side: Side) -> Vec<Order> {
         let book = match side {
             Side::Buy => &self.bids,
             Side::Sell => &self.asks
         };
 
         book.values().flatten().cloned().collect()
+    }
+
+    pub fn get_bids(&self) -> BTreeMap<u64, Vec<Order>> {
+        self.bids.clone()
+    }
+
+    pub fn get_asks(&self) -> BTreeMap<u64, Vec<Order>> {
+        self.asks.clone()
     }
 
     pub fn cancel_trade(&mut self, id: u64) -> Vec<Event> {

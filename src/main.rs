@@ -102,11 +102,13 @@ impl App {
                 .constraints([Constraint::Length(3), Constraint::Percentage(70), Constraint::Percentage(30)])
                 .split(frame.area());
 
+            // Get bid and ask BTree
+            let bids: std::collections::BTreeMap<u64, Vec<Order>> = self.book.get_bids();
+            let asks: std::collections::BTreeMap<u64, Vec<Order>> = self.book.get_asks();
+
             let (best_bid, best_ask) = {
-                let bids = self.book.get_outstanding(Side::Buy);
-                let asks = self.book.get_outstanding(Side::Sell);
-                let best_bid = bids.iter().map(|o| o.price).max();
-                let best_ask = asks.iter().map(|o| o.price).min();
+                let best_bid = bids.last_key_value().map(|(price, _)| *price);
+                let best_ask = asks.first_key_value().map(|(price, _)| *price);
                 (best_bid, best_ask)
             };
             
@@ -133,35 +135,16 @@ impl App {
             let visible_candles = &self.statistics.candles;
             let min_price = visible_candles.iter().map(|o| o.low).min().unwrap_or(0) as f64;
             let max_price = visible_candles.iter().map(|o| o.high).max().unwrap_or(0) as f64;
-            let x_max = visible_candles.len() as f64 * 3.0;
+            let x_max = 3.0 * 30.0 + 1.0;
 
             let canvas_widget = Canvas::default()
             .block(Block::bordered().title("Canvas"))
-            .x_bounds([0.0, x_max + 1.0])
+            .x_bounds([0.0, x_max])
             .y_bounds([min_price, max_price])
             .paint(|ctx| {
-                // ctx.draw(&Map {
-                //     resolution: MapResolution::High,
-                //     color: Color::White,
-                // });
-                // ctx.layer();
-                // ctx.draw(&Line {
-                //     x1: 0.0,
-                //     y1: 10.0,
-                //     x2: 10.0,
-                //     y2: 10.0,
-                //     color: Color::White,
-                // });
-                // ctx.draw(&Rectangle {
-                //     x: 10.0,
-                //     y: 20.0,
-                //     width: 10.0,
-                //     height: 10.0,
-                //     color: Color::Red,
-                // });
                 
                 let next_index = self.statistics.candles.len();
-                for (index, candle) in self.statistics.candles.iter().enumerate() {
+                for (index, candle) in self.statistics.candles.iter().enumerate().rev().take(30) {
                     let color = if candle.close >= candle.open { Color::Green} else { Color::Red };
 
                     ctx.draw(&Line {
@@ -213,29 +196,54 @@ impl App {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(chunks[2]);
+            
+            let max_bid_quantity = bids.values()
+            .map(|orders| orders.iter().map(|o| o.quantity).sum::<u64>())
+            .max()
+            .unwrap_or(0);
+        
+            let max_ask_quantity = asks.values()
+                .map(|orders| orders.iter().map(|o| o.quantity).sum::<u64>())
+                .max()
+                .unwrap_or(0);
+            
+            let mut bid_levels: Vec<(u64, u64)> = bids.iter()
+            .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum::<u64>()))
+            .collect();
+            bid_levels.sort_by(|a, b| b.0.cmp(&a.0)); // Descending
+        
+            let mut ask_levels: Vec<(u64, u64)> = asks.iter()
+            .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum::<u64>()))
+            .collect();
+            ask_levels.sort_by(|a, b| a.0.cmp(&b.0)); // Ascending
+            
+            let bar_width = 50;
 
-            let mut bids: Vec<Order> = self.book.get_outstanding(Side::Buy);
-            // Sort highest to lowest
-            bids.sort_by(|a, b| b.price.cmp(&a.price));
-
-            let bid_lines: Vec<String> = bids.iter()
-                .map(|o| format!("#{} {} @ {}", o.id, o.quantity, o.price))
-                .collect();
-
+            // Bid
+            let bid_lines: Vec<String> = bid_levels.iter()
+            .map(|(price, quantity)| {
+                let filled = ((*quantity as f64 / max_bid_quantity as f64) * bar_width as f64).round() as usize;
+                let bar = "█".repeat(filled);
+                format!("{:>5} orders @ {:>5} {}", quantity, price, bar)
+            })
+            .collect();
+        
+        
             let buy_widget = List::new(bid_lines)
                 .block(Block::default().borders(Borders::ALL).title("Bids"));
             frame.render_widget(buy_widget, bottom_chunks[0]);
-            
-            let mut asks: Vec<Order> = self.book.get_outstanding(Side::Sell);
-            // Sort lowest to highest
-            asks.sort_by_key(|o| o.price);
 
-            let ask_lines: Vec<String> = asks.iter()
-                .map(|o| format!("#{} {} @ {}", o.id, o.quantity, o.price))
-                .collect();
+            // Ask
+            let ask_lines: Vec<String> = ask_levels.iter()
+            .map(|(price, quantity)| {
+                let filled = ((*quantity as f64 / max_ask_quantity as f64) * bar_width as f64).round() as usize;
+                let bar = "█".repeat(filled);
+                format!("{:>5} orders @ {:>5} {}", quantity, price, bar)
+            })
+            .collect();
 
-            let sell_widget = List::new(ask_lines)
+            let ask_widget = List::new(ask_lines)
                 .block(Block::default().borders(Borders::ALL).title("Asks"));
-            frame.render_widget(sell_widget, bottom_chunks[1]);
+            frame.render_widget(ask_widget, bottom_chunks[1]);
     }
 }
