@@ -3,7 +3,7 @@ use rand_distr::{Exp, Distribution, Normal};
 use crate::order::{Order, Side, TradeType};
 
 pub struct FeedSimulator {
-    mid_price: f64,       // Current simulated mid price
+    mid_price: f64,       // Current simulated mid-price
     rng: ThreadRng,       
     next_id: u64,         
     rate_per_second: f64, // orders per second
@@ -58,6 +58,7 @@ impl FeedSimulator {
         };
 
         (Order {
+            user: 0,
             id,
             side,
             price,

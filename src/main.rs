@@ -2,6 +2,7 @@ mod order;
 mod orderbook;
 mod feed_simulator;
 mod statistics;
+mod user;
 
 use crossterm::{
     terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -11,8 +12,9 @@ use crossterm::{
 use orderbook::OrderBook;
 use feed_simulator::FeedSimulator;
 use statistics::Stats;
+use user::User;
 
-use crate::order::{Event, Order};
+use crate::order::{Event, Order, TradeType};
 use ratatui::{
     Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, widgets::{Block, Borders, List, Paragraph},
 };
@@ -59,6 +61,7 @@ struct App {
     order_rx: mpsc::Receiver<Order>,
     statistics: Stats,
     exit:bool,
+    user: User
 }
 
 impl App {
@@ -69,6 +72,7 @@ impl App {
             order_rx,
             statistics: Stats::new(),
             exit: false,
+            user: User::new(1)
         }
     }
 
@@ -88,11 +92,37 @@ impl App {
                 if let CEvent::Key(key) = event::read()? {
                     if key.code == KeyCode::Char('q') {
                         self.exit = true;
+
+                    } else if key.code == KeyCode::Char('b') {
+                        self.submit_user_trade(Side::Buy);
+
+                    } else if key.code == KeyCode::Char('s') {
+                        self.submit_user_trade(Side::Sell);
+
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn submit_trade(&mut self, order: Order) -> Vec<Event>{
+        let outcome = self.book.submit(order);
+        for event in &outcome {
+            self.statistics.record_event(event);
+        }
+        self.events.extend(outcome.iter().cloned());
+        outcome
+    }
+
+    fn submit_user_trade(&mut self, side: Side) {
+        let order = Order {user: self.user.id, id: 987654, side, price:0,
+            quantity: 10, trade_type: TradeType::Market};
+        self.user.record_order(order.clone());
+        let events = self.submit_trade(order);
+        for event in events {
+            self.user.check_event(event);
+        }
     }
 
     fn draw(&self, frame: &mut ratatui::Frame) {
@@ -186,7 +216,7 @@ impl App {
             frame.render_widget(canvas_widget, chunks[1]);
 
 
-            // Mid view
+            // Mid-view
             // let log_list = List::new(log_items)
             //     .block(Block::default().borders(Borders::ALL).title("Trade Log"));
             // frame.render_widget(log_list, chunks[1]);

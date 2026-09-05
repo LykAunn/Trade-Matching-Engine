@@ -33,7 +33,7 @@ impl OrderBook {
         let time = now_ts();
         let matching_prices: Vec<u64>;
 
-        events.push(Event::Accepted { order_id: order.id, timestamp: time});
+        events.push(Event::Accepted {user: order.user, order_id: order.id, timestamp: time});
 
         let book = match order.side { // Pick the opposite book
             Side::Buy => &mut self.asks,
@@ -136,10 +136,10 @@ impl OrderBook {
         self.asks.clone()
     }
 
-    pub fn cancel_trade(&mut self, id: u64) -> Vec<Event> {
+    pub fn cancel_trade(&mut self, id: u64, user:u32) -> Vec<Event> {
         let mut event: Vec<Event> = Vec::new();
         let time = now_ts();
-        event.push(Event::Accepted { order_id: id, timestamp: time });
+        event.push(Event::Accepted {user, order_id: id, timestamp: time });
 
         if let Some(value) = self.order_index.get(&id) {
             let order_side = value.0;
@@ -184,6 +184,7 @@ use super::*;
         let mut events = Vec::new();
 
         events.extend(book.submit(Order {
+            user: 0,
             id: 123,
             side: Side::Buy,
             price: 100,
@@ -192,6 +193,7 @@ use super::*;
         }));
 
         events.extend(book.submit(Order {
+            user: 0,
             id: 234,
             side: Side::Sell,
             price: 100,
@@ -232,9 +234,9 @@ use super::*;
         let mut book = OrderBook::new();
         let mut events = Vec::new();
 
-        events.extend(book.submit(Order {id: 123,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
-        events.extend(book.submit(Order {id: 234,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
-        events.extend(book.submit(Order {id: 345,  side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user: 0, id: 123,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user: 0, id: 234,  side: Side::Buy, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user:0, id: 345,  side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
 
         match &events[5] {
             Event::Trade { buy_order_id, ..} 
@@ -248,9 +250,9 @@ use super::*;
         let mut book = OrderBook::new();
         let mut events = Vec::new();
 
-        events.extend(book.submit(Order {id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
-        events.extend(book.submit(Order {id: 234, side: Side::Buy, price: 99, quantity: 50, trade_type: TradeType::Limit}));
-        events.extend(book.submit(Order {id: 321, side: Side::Buy, price: 0, quantity: 99, trade_type: TradeType::Market}));
+        events.extend(book.submit(Order {user: 0, id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user:0, id: 234, side: Side::Buy, price: 99, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user:0, id: 321, side: Side::Buy, price: 0, quantity: 99, trade_type: TradeType::Market}));
 
         match &events[5] {
             Event::Trade { buy_order_id , ..}
@@ -264,8 +266,8 @@ use super::*;
         let mut book = OrderBook::new();
         let mut events = Vec::new();
 
-        events.extend(book.submit(Order {id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
-        events.extend(book.submit(Order {id: 321, side: Side::Buy, price: 100, quantity: 100, trade_type: TradeType::Ioc}));
+        events.extend(book.submit(Order {user:0, id: 123, side: Side::Sell, price: 100, quantity: 50, trade_type: TradeType::Limit}));
+        events.extend(book.submit(Order {user:0, id: 321, side: Side::Buy, price: 100, quantity: 100, trade_type: TradeType::Ioc}));
 
         match &events[3] {
             Event::Trade { buy_order_id , ..}
@@ -273,7 +275,7 @@ use super::*;
             other => panic!("Expected Trade, got {:?}", other)
         }
 
-        let outstanding = book.get_outstanding(Side::Buy);
+        let outstanding = book.get_outstanding_orders(Side::Buy);
         assert!(outstanding.is_empty(), "expected no outstanding buy orders, found {:?}", outstanding);
     }
 
