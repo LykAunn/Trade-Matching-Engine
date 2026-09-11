@@ -22,9 +22,11 @@ use ratatui::style::Color;
 use ratatui::widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle};
 use std::{io, sync::mpsc, time::Duration, };
 use std::thread;
+use ratatui::widgets::ListItem;
+use log::log;
 use order::Side;
 
-fn main() -> io::Result<()>{    
+fn main() -> io::Result<()>{
     // --- terminal setup ---
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -45,7 +47,7 @@ fn main() -> io::Result<()>{
 
 fn spawn_simulator(order_tx: mpsc::Sender<Order>) {
     thread::spawn(move || {
-        let mut simulator = FeedSimulator::new(10.0, 2.0);
+        let mut simulator = FeedSimulator::new(1.0, 2.0);
         loop {
             let (order, gap) = simulator.generate_next();
             thread::sleep(Duration::from_secs_f64(gap.min(1.0)));
@@ -61,7 +63,8 @@ struct App {
     order_rx: mpsc::Receiver<Order>,
     statistics: Stats,
     exit:bool,
-    user: User
+    user: User,
+    next_id: u64
 }
 
 impl App {
@@ -72,14 +75,16 @@ impl App {
             order_rx,
             statistics: Stats::new(),
             exit: false,
-            user: User::new(1)
+            user: User::new(1),
+            next_id: 0
         }
     }
 
     fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
         while !self.exit {
             while let Ok(order) = self.order_rx.try_recv() {
-                let outcome = self.book.submit(order);
+                let updated_order = self.assign_id_to_order(order);
+                let outcome = self.book.submit(updated_order);
                 for event in &outcome {
                     self.statistics.record_event(event);
                 }
@@ -106,6 +111,12 @@ impl App {
         Ok(())
     }
 
+    fn assign_id_to_order(&mut self, mut order: Order) -> Order{
+        order.id = self.next_id;
+        self.next_id += 1;
+        order
+    }
+
     fn submit_trade(&mut self, order: Order) -> Vec<Event>{
         let outcome = self.book.submit(order);
         for event in &outcome {
@@ -116,8 +127,9 @@ impl App {
     }
 
     fn submit_user_trade(&mut self, side: Side) {
-        let order = Order {user: self.user.id, id: 987654, side, price:0,
+        let order = Order {user: self.user.id, id: self.next_id, side, price:0,
             quantity: 10, trade_type: TradeType::Market};
+        self.next_id += 1;
         self.user.record_order(order.clone());
         let events = self.submit_trade(order);
         for event in events {
@@ -141,7 +153,7 @@ impl App {
                 let best_ask = asks.first_key_value().map(|(price, _)| *price);
                 (best_bid, best_ask)
             };
-            
+
             let spread_text = match (best_bid, best_ask) {
                 (Some(b), Some(a)) => format!(
                     "Bid: {}  Ask: {}  Spread: {}  Trades: {}  Vol: {}  VWAP: {:.2}",
@@ -150,17 +162,17 @@ impl App {
                 ),
                 _ => "Waiting for liquidity...".to_string(),
             };
-            
+
             // Top view
             let stats_widget = Paragraph::new(spread_text)
             .block(Block::default().borders(Borders::ALL).title("Market Stats"));
             frame.render_widget(stats_widget, chunks[0]);
-        
-            // let log_items: Vec<ListItem> = self.events.iter()
-            // .rev()
-            // .take(30)
-            // .map(|e| ListItem::new(e.to_log_line()))
-            // .collect();
+
+            // Mid-view
+            let mid_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[1]);
 
             let visible_candles = &self.statistics.candles;
             let min_price = visible_candles.iter().map(|o| o.low).min().unwrap_or(0) as f64;
@@ -168,11 +180,11 @@ impl App {
             let x_max = 3.0 * 30.0 + 1.0;
 
             let canvas_widget = Canvas::default()
-            .block(Block::bordered().title("Canvas"))
+            .block(Block::bordered().title("Candle Chart"))
             .x_bounds([0.0, x_max])
             .y_bounds([min_price, max_price])
             .paint(|ctx| {
-                
+
                 let next_index = self.statistics.candles.len();
                 for (index, candle) in self.statistics.candles.iter().enumerate().rev().take(30) {
                     let color = if candle.close >= candle.open { Color::Green} else { Color::Red };
@@ -205,7 +217,7 @@ impl App {
                     ctx.draw(&Rectangle {
                         x: next_index as f64 * 3.0,
                         y: current_candle.open.min(current_candle.close) as f64,
-                        width: 2.0, 
+                        width: 2.0,
                         height: (current_candle.open as f64 - current_candle.close as f64).abs().max(0.5),
                         color,
                     });
@@ -213,14 +225,18 @@ impl App {
             });
 
 
-            frame.render_widget(canvas_widget, chunks[1]);
+            frame.render_widget(canvas_widget, mid_chunks[0]);
 
+            let log_items: Vec<ListItem> = self.events.iter()
+            .rev()
+            .take(30)
+            .map(|e| ListItem::new(e.to_log_line()))
+            .collect();
 
-            // Mid-view
-            // let log_list = List::new(log_items)
-            //     .block(Block::default().borders(Borders::ALL).title("Trade Log"));
-            // frame.render_widget(log_list, chunks[1]);
-            
+            let log_list = List::new(log_items)
+                .block(Block::default().borders(Borders::ALL).title("Trade Log"));
+            frame.render_widget(log_list, mid_chunks[1]);
+
             // Bottom view (bids & asks)
             let bottom_chunks = Layout::default()
                 .direction(Direction::Horizontal)

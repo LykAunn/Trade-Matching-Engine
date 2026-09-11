@@ -48,7 +48,7 @@ impl FeedSimulator {
 
         let quantity = self.rng.random_range(1..=100);
 
-        let id = self.next_id;
+        let id = 0;
         self.next_id += 1;
 
         let order_type = match self.rng.random_range(1..100) {

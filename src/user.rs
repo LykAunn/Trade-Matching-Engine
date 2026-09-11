@@ -13,19 +13,16 @@ impl User {
     }
 
     pub fn record_order(&mut self, order: Order) {
-        self.matched_orders.push(order)
+        self.unmatched_orders.push(order)
     }
 
     pub fn check_event(&mut self, event: Event) {
-        match event {
-            Event::Trade {buy_order_id, sell_order_id, ..} => {
-                if let Some(index) = self.unmatched_orders.iter().position( | o| {
-                    o.id == buy_order_id || o.id == sell_order_id
-                }) {
-                    self.match_order(index)
-                }
+        if let Event::Trade {buy_order_id, sell_order_id, ..} = event {
+            if let Some(index) = self.unmatched_orders.iter().position( | o| {
+                o.id == buy_order_id || o.id == sell_order_id
+            }) {
+                self.match_order(index)
             }
-            _ => (),
         }
     }
 
