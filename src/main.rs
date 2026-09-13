@@ -19,11 +19,10 @@ use ratatui::{
     Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, widgets::{Block, Borders, List, Paragraph},
 };
 use ratatui::style::Color;
-use ratatui::widgets::canvas::{Canvas, Line, Map, MapResolution, Rectangle};
+use ratatui::widgets::canvas::{Canvas, Line, Rectangle};
 use std::{io, sync::mpsc, time::Duration, };
 use std::thread;
 use ratatui::widgets::ListItem;
-use log::log;
 use order::Side;
 
 fn main() -> io::Result<()>{
@@ -34,9 +33,10 @@ fn main() -> io::Result<()>{
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     
     let (order_tx, order_rx) = mpsc::channel::<Order>();
-    spawn_simulator(order_tx);
+    let (price_tx, price_rx) = mpsc::channel::<f64>();
+    spawn_simulator(order_tx, price_rx);
 
-    let mut app = App::new(order_rx);
+    let mut app = App::new(order_rx, price_tx);
     app.run(&mut terminal)?;
 
     disable_raw_mode()?;
@@ -45,9 +45,9 @@ fn main() -> io::Result<()>{
     Ok(())
 }
 
-fn spawn_simulator(order_tx: mpsc::Sender<Order>) {
+fn spawn_simulator(order_tx: mpsc::Sender<Order>, price_rx: mpsc::Receiver<f64>) {
     thread::spawn(move || {
-        let mut simulator = FeedSimulator::new(1.0, 2.0);
+        let mut simulator = FeedSimulator::new(1.0, 2.0, price_rx);
         loop {
             let (order, gap) = simulator.generate_next();
             thread::sleep(Duration::from_secs_f64(gap.min(1.0)));
@@ -61,6 +61,7 @@ struct App {
     book: OrderBook,
     events: Vec<Event>,
     order_rx: mpsc::Receiver<Order>,
+    price_tx: mpsc::Sender<f64>,
     statistics: Stats,
     exit:bool,
     user: User,
@@ -68,11 +69,12 @@ struct App {
 }
 
 impl App {
-    fn new(order_rx: mpsc::Receiver<Order>) -> Self {
+    fn new(order_rx: mpsc::Receiver<Order>, price_tx: mpsc::Sender<f64>) -> Self {
         App {
             book: OrderBook::new(),
             events: Vec::new(),
             order_rx,
+            price_tx,
             statistics: Stats::new(),
             exit: false,
             user: User::new(1),
@@ -123,6 +125,23 @@ impl App {
             self.statistics.record_event(event);
         }
         self.events.extend(outcome.iter().cloned());
+
+        let best_bid_info = self.book.get_bids().last_key_value()
+            .map(|(price, orders)| (*price, orders.iter()
+                .map(|o| o.quantity).sum::<u64>()));
+
+        let best_ask_info = self.book.get_asks().first_key_value()
+            .map(|(price, orders)| (*price, orders.iter()
+                .map(|o| o.quantity).sum::<u64>()));
+
+        if let Some((best_bid, bid_quantity)) = best_bid_info
+            && let Some((best_ask, ask_quantity)) = best_ask_info {
+                // Currently calculating in u64
+                let mid_price = ((best_bid * bid_quantity) as f64 + (best_ask * ask_quantity) as f64) /
+                    (bid_quantity + ask_quantity) as f64;
+                self.price_tx.send(mid_price).expect("Could not send pricing over to feed sim");
+        }
+
         outcome
     }
 

@@ -1,20 +1,23 @@
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use rand::{RngExt, rngs::ThreadRng};
 use rand_distr::{Exp, Distribution, Normal};
 use crate::order::{Order, Side, TradeType};
 
 pub struct FeedSimulator {
     mid_price: f64,       // Current simulated mid-price
-    rng: ThreadRng,       
-    next_id: u64,         
+    rng: ThreadRng,
+    next_id: u64,
     rate_per_second: f64, // orders per second
     volatility: f64,      // size of random walk step
     sim_time: f64,        // total simulated time
     exp: Exp<f64>,
-    normal: Normal<f64>
+    normal: Normal<f64>,
+    price_rx: mpsc::Receiver<f64>,
 }
 
 impl FeedSimulator {
-    pub fn new(rate_per_second: f64, volatility: f64) -> Self {
+    pub fn new(rate_per_second: f64, volatility: f64, price_rx: Receiver<f64>) -> Self {
         FeedSimulator {
             mid_price: 100.0,
             rng: rand::rng(),
@@ -24,6 +27,7 @@ impl FeedSimulator {
             sim_time: 0.0,
             exp: Exp::new(rate_per_second).unwrap(),
             normal : Normal::new(0.0, volatility).unwrap(),
+            price_rx
         }
     }
 
@@ -32,6 +36,10 @@ impl FeedSimulator {
         // Time
         let gap = self.exp.sample(&mut self.rng);
         self.sim_time += gap;
+
+        while let Ok(mid_price) = self.price_rx.try_recv() {
+            self.mid_price = mid_price;
+        }
 
         // Price
         let delta = self.normal.sample(&mut self.rng);
