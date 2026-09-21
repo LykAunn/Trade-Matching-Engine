@@ -1,4 +1,4 @@
-use crate::order::{Event::{self, RestingFulfilled}, Order, Side, TradeType};
+use crate::order::{Event::{self}, Order, Side, TradeType};
 use std::{cmp::min, collections::{BTreeMap, HashMap}, time::UNIX_EPOCH};
 use std::time::{SystemTime, Duration};
 use chrono::{DateTime, Utc};

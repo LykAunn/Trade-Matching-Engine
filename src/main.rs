@@ -24,6 +24,9 @@ use std::{io, sync::mpsc, time::Duration, };
 use std::collections::BTreeMap;
 use std::thread;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, MouseButton, MouseEventKind};
+use rand_distr::num_traits::SaturatingSub;
+use ratatui::layout::Rect;
+use ratatui::symbols::Marker;
 use ratatui::widgets::ListItem;
 use order::Side;
 
@@ -49,7 +52,7 @@ fn main() -> io::Result<()>{
 
 fn spawn_simulator(order_tx: mpsc::Sender<Order>, price_rx: mpsc::Receiver<f64>) {
     thread::spawn(move || {
-        let mut simulator = FeedSimulator::new(1.0, 2.0, price_rx);
+        let mut simulator = FeedSimulator::new(3.0, 2.0, price_rx);
         loop {
             let (order, gap) = simulator.generate_next();
             thread::sleep(Duration::from_secs_f64(gap.min(1.0)));
@@ -67,7 +70,9 @@ struct App {
     statistics: Stats,
     exit:bool,
     user: User,
-    next_id: u64
+    next_id: u64,
+    buy_button_area: ratatui::layout::Rect,
+    sell_button_area: ratatui::layout::Rect
 }
 
 impl App {
@@ -80,7 +85,9 @@ impl App {
             statistics: Stats::new(),
             exit: false,
             user: User::new(1),
-            next_id: 0
+            next_id: 0,
+            buy_button_area: Rect::new(0,0,0,0),
+            sell_button_area: Rect::new(0,0,0,0)
         }
     }
 
@@ -113,8 +120,16 @@ impl App {
                     }
                     CEvent::Mouse(mouse_event) => {
                         // click handling
-                        if mouse_event.kind == MouseEventKind::Down(MouseButton::Middle) {
-                            self.exit = true;
+                        if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
+                            let (col, row) = (mouse_event.column, mouse_event.row);
+                            if self.buy_button_area.contains(ratatui::layout::Position{x :col, y: row}) {
+                                // Clicked on buy button
+                                self.submit_user_trade(Side::Buy);
+
+                            } else if self.sell_button_area.contains(ratatui::layout::Position{x: col, y:row}) {
+                                // Clicked on sell button
+                                self.submit_user_trade(Side::Sell);
+                            }
                         }
                     }
                     _ => {} // Ignore other events
@@ -166,11 +181,12 @@ impl App {
         }
     }
 
-    fn draw(&self, frame: &mut ratatui::Frame) {
+    fn draw(&mut self, frame: &mut ratatui::Frame) {
         // Split view into chunks
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Percentage(70), Constraint::Percentage(30)])
+            .constraints([Constraint::Length(3), Constraint::Percentage(70), Constraint::Percentage(10),
+                Constraint::Percentage(20)])
             .split(frame.area());
 
         // Get bid and ask BTree
@@ -203,6 +219,7 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[1]);
 
+        // Candle generation (mid left)
         let visible_candles = &self.statistics.candles;
         let min_price = visible_candles.iter().map(|o| o.low).min().unwrap_or(0) as f64;
         let max_price = visible_candles.iter().map(|o| o.high).max().unwrap_or(0) as f64;
@@ -212,8 +229,11 @@ impl App {
             .block(Block::bordered().title("Candle Chart"))
             .x_bounds([0.0, x_max])
             .y_bounds([min_price, max_price])
+            .marker(Marker::Braille)
             .paint(|ctx| {
                 let next_index = self.statistics.candles.len();
+
+                // Previous candles
                 for (index, candle) in self.statistics.candles.iter().enumerate().rev().take(30) {
                     let color = if candle.close >= candle.open { Color::Green } else { Color::Red };
 
@@ -233,8 +253,10 @@ impl App {
                     });
                 }
 
+                // Currently being updated candle
                 if let Some(current_candle) = &self.statistics.current_candle {
                     let color = if current_candle.close >= current_candle.open { Color::Green } else { Color::Red };
+                    // Line
                     ctx.draw(&Line {
                         x1: next_index as f64 * 3.0 + 1.0,
                         y1: current_candle.low as f64,
@@ -242,6 +264,7 @@ impl App {
                         y2: current_candle.high as f64,
                         color,
                     });
+                    // Main Rectangle
                     ctx.draw(&Rectangle {
                         x: next_index as f64 * 3.0,
                         y: current_candle.open.min(current_candle.close) as f64,
@@ -255,6 +278,7 @@ impl App {
 
         frame.render_widget(canvas_widget, mid_chunks[0]);
 
+        // --- Event log view (mid right) ---
         let log_items: Vec<ListItem> = self.events.iter()
             .rev()
             .take(30)
@@ -265,32 +289,64 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("Trade Log"));
         frame.render_widget(log_list, mid_chunks[1]);
 
-        // Bottom view (bids & asks)
-        let bottom_chunks = Layout::default()
+        // --- Buttons ---
+        let button_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[2]);
+
+        // --- Buy button ---
+        let buy_chunk = Rect {x: button_chunks[0].x + 2,
+            y: button_chunks[0].y + 1,
+            width: button_chunks[0].width.saturating_sub(4),
+            height: button_chunks[0].height.saturating_sub(1)};
+
+        self.buy_button_area = buy_chunk;
+
+        let buy_button = Paragraph::new("BUY")
+            .block(Block::default().borders(Borders::ALL))
+            .style(ratatui::style::Style::default().bg(Color::Green));
+        frame.render_widget(buy_button, buy_chunk);
+
+        // --- Sell button ---
+        let sell_chunk = Rect {x: button_chunks[1].x + 2,
+            y: button_chunks[1].y + 1,
+            width: button_chunks[1].width.saturating_sub(4),
+            height: button_chunks[1].height.saturating_sub(1)};
+
+        self.sell_button_area = sell_chunk;
+
+        let sell_button = Paragraph::new("SELL")
+            .block(Block::default().borders(Borders::ALL))
+            .style(ratatui::style::Style::default().bg(Color::Red));
+        frame.render_widget(sell_button, sell_chunk);
+
+        // --- Bottom view (bids & asks) ---
+        let bottom_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[3]);
 
         let max_bid_quantity = App::get_max_quantity(&bids);
 
         let max_ask_quantity = App::get_max_quantity(&asks);
 
         // Descending
-        let mut bid_levels: Vec<(u64, u64)> = App::sort_book_level(&bids, false);
+        let bid_levels: Vec<(u64, u64)> = App::sort_book_level(&bids, false);
 
         // Ascending
-        let mut ask_levels: Vec<(u64, u64)> = App::sort_book_level(&asks, true);
+        let ask_levels: Vec<(u64, u64)> = App::sort_book_level(&asks, true);
 
         let bar_width = 50;
 
-        // Bid quantity display
+        // --- Bid quantity display ---
         let bid_lines: Vec<String> = App::create_lines(bid_levels, max_bid_quantity, bar_width);
 
         let buy_widget = List::new(bid_lines)
             .block(Block::default().borders(Borders::ALL).title("Bids"));
         frame.render_widget(buy_widget, bottom_chunks[0]);
 
-        // Ask quantity display
+        // --- Ask quantity display ---
         let ask_lines: Vec<String> = App::create_lines(ask_levels, max_ask_quantity, bar_width);
 
         let ask_widget = List::new(ask_lines)
@@ -321,7 +377,7 @@ impl App {
     fn create_lines(levels: Vec<(u64, u64)>, max_quantity: u64, bar_width: i32) -> Vec<String> {
         levels.iter()
             .map(|(price, quantity)| {
-                let filled = ((*quantity as f64 / max_quantity as f64) * bar_width as f64).round() as usize;
+                let filled = ((*quantity as f64 / max_quantity as f64) * bar_width as f64).round().max(1.0) as usize;
                 let bar = "█".repeat(filled);
                 format!("{:>5} orders @ {:>5} {}", quantity, price, bar)
             })
