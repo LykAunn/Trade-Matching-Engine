@@ -62,6 +62,12 @@ fn spawn_simulator(order_tx: mpsc::Sender<Order>, price_rx: mpsc::Receiver<f64>)
         }
     });
 }
+
+enum Page {
+    Overview,
+    Trade,
+}
+
 struct App {
     book: OrderBook,
     events: Vec<Event>,
@@ -72,7 +78,9 @@ struct App {
     user: User,
     next_id: u64,
     buy_button_area: ratatui::layout::Rect,
-    sell_button_area: ratatui::layout::Rect
+    sell_button_area: ratatui::layout::Rect,
+    current_page: Page,
+    price_input: String
 }
 
 impl App {
@@ -87,7 +95,9 @@ impl App {
             user: User::new(1),
             next_id: 0,
             buy_button_area: Rect::new(0,0,0,0),
-            sell_button_area: Rect::new(0,0,0,0)
+            sell_button_area: Rect::new(0,0,0,0),
+            current_page: Page::Overview,
+            price_input: "".to_string()
         }
     }
 
@@ -116,6 +126,11 @@ impl App {
                             self.submit_user_trade(Side::Buy);
                         } else if key.code == KeyCode::Char('s') {
                             self.submit_user_trade(Side::Sell);
+                        } else if key.code == KeyCode::Tab {
+                            self.current_page = match self.current_page {
+                                Page::Overview => Page::Trade,
+                                Page::Trade => Page::Overview,
+                            };
                         }
                     }
                     CEvent::Mouse(mouse_event) => {
@@ -360,9 +375,9 @@ impl App {
             .map(|(price, orders)| (*price, orders.iter().map(|o| o.quantity).sum::<u64>()))
             .collect();
         if ascending {
-            levels.sort_by(|a,b| a.0.cmp(&b.0))
+            levels.sort_by_key(|a| a.0)
         } else {
-            levels.sort_by(|a,b| b.0.cmp(&a.0))
+            levels.sort_by_key(|a| std::cmp::Reverse(a.0))
         }
         levels
     }
