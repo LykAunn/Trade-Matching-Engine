@@ -16,6 +16,7 @@ pub enum TradeType {
 
 #[derive(Debug, Clone)]
 pub struct Order {
+    pub user: u32,
     pub id: u64,
     pub side: Side,
     pub price: u64,
@@ -27,6 +28,7 @@ pub struct Order {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Accepted {
+        user: u32,
         order_id: u64,
         timestamp: u64,
     },
@@ -78,8 +80,8 @@ impl Event {
 
     pub fn to_log_line(&self) -> String {
         match self {
-            Event::Accepted { order_id, timestamp } => {
-                format!("[{}] ACCEPT    order #{}", format_timestamp(*timestamp), order_id)
+            Event::Accepted {user, order_id, timestamp } => {
+                format!("[{}] ACCEPT    order #{}   user:{}", format_timestamp(*timestamp), order_id, user)
             }
             
             Event::Trade { buy_order_id, sell_order_id, price, qty, timestamp } => {

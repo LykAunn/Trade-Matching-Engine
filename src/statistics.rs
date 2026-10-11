@@ -19,7 +19,7 @@ impl Stats {
             total_notional: 0,
             candles: Vec::new(),
             series_start_time: now_ts(),
-            bucket_duration: 5000000000,
+            bucket_duration: 10000000000, // 10 seconds
             current_candle: None
         }
     }
